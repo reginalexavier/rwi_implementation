@@ -1,0 +1,241 @@
+---
+title: "Implementation of RWI - Rescaled Water Index in R"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,
+                      # attr.source = '.numberLines',
+                      # comment = "#>",
+                      tidy=TRUE)
+library(tidyverse)
+```
+
+## Description
+
+This repository provides the implementation of the RWI (Rescaled Water Index), a modification of the MNDWI, designed to enhance the mapping of water surfaces (WSs) in urban areas using Sentinel-2 satellite imagery.
+
+The RWI has shown promising results compared to widely used indices such as NDWI, MNDWI, AWEIsh, and AWEInsh. Tests conducted in six South American cities (São Paulo, Curitiba, Florianópolis, Porto Alegre, Buenos Aires, and Viña del Mar) revealed that RWI achieved better results in three locations and the best overall performance. Its primary contribution lies in improving the detection of water bodies in urban contexts and the delineation of coastal and riverine boundaries.
+
+This R implementation is based on the paper: **"RWI: A New Spectral Index for Mapping Aquatic Surfaces in Urban Contexts"**. The original study, which proposed and evaluated the RWI, is available on EarthArXiv: <https://eartharxiv.org/repository/view/7005/>. See the original repository [here](https://github.com/edujusti/Rescaled-Water-Index-RWI).
+
+### The RWI formula
+
+The RWI is calculated as follows:
+
+$$ 
+RWI = \frac{Green^{e^{-1}} \cdot n^{-1} - Swir1}{Green^{e^{-1}} \cdot n^{-1} + Swir1}
+$$
+
+Where: $$
+n = \frac{m_{d}(Green^{(e^{-1})})}{m_{d}(Green)}
+$$
+
+-   $Green$: Green band _(B03)_ from Sentinel-2 imagery
+-   $Swir1$: Short-wave infrared band _(B11)_ from Sentinel-2 imagery
+-   $m_{d}$: Median value of the region of interest
+-   $e$: Euler's number
+
+
+
+### R implementation of the RWI
+
+```{r}
+# compute the n value for the region of interest
+n_by_region <- function(x) {
+  temp_df <- transform(x, 
+                       B3Pow = B3^(1/exp(1)))
+  
+  temp_df <- apply(temp_df[, c("B3", "B3Pow")], 2, median, na.rm = TRUE)
+  
+  temp_df[[2]]/temp_df[[1]]
+  
+}
+# compute the RWI
+rwi <- function(green, swir1, n) {
+  e <- exp(1)
+  rwi <- (green^(1/e) / n - swir1) / (green^(1/e) / n + swir1)
+  return(rwi)
+}
+
+```
+
+
+
+
+```{r echo=FALSE}
+# Other spectral indices (just for comparison)
+ndwi <- function(nir, green) {
+  (nir - green) / (nir + green)
+}
+
+mndwi <- function(green, swir) {
+  (green - swir) / (green + swir)
+}
+
+
+AWEIsh <- function(blue, green, nir, swir1, swir2) {
+  blue + 2.5 * green - 1.5 * (nir + swir1) - 0.25 * swir2
+}
+
+AWEInsh <- function(blue, green, nir, swir1, swir2) {
+  4 * (green - swir1) - (0.25 * nir + 2.75 * swir2)
+}
+```
+
+
+
+### Data input from the original repository (availabe [here](https://github.com/edujusti/Rescaled-Water-Index-RWI/blob/main/samplePointsCities_20240811_harmonized.csv))
+```{r}
+df_SR <- read.csv("data/samplePointsCities_20240811_harmonized.csv") 
+dplyr::glimpse(df_SR)
+```
+
+
+
+
+#### The cities in the dataset
+```{r}
+df_SR$city %>% janitor::tabyl()
+```
+
+```{r echo=FALSE, eval=FALSE}
+set.seed(1712)
+# knitr::kable(df_SR[sample(seq_len(nrow(df_SR)), 10), ], format = "html")
+```
+
+
+#### Compute the RWI for a specific city
+```{r}
+df_SR_splited <- df_SR %>%
+  split(.$city)
+
+sp_city <- df_SR_splited[[5]] # São Paulo
+
+dplyr::as_tibble(sp_city) %>% head(20)
+```
+
+
+#### Compute the RWI for São Paulo
+```{r}
+sp_city_rwi <- transform(sp_city, 
+                         RWI = rwi(B3, B11, 
+                                   n_by_region(sp_city))
+                         )
+
+
+# Compute the range of RWI values for each surface type
+sp_city_rwi %>% split(.$surface) %>% 
+  lapply(function(x) {
+    range(x$RWI)
+      }) %>% as.data.frame() %>% 
+  t() %>% as.data.frame() %>%
+  dplyr::rename(RWI_min = V1, RWI_max = V2)
+```
+
+
+#### Plot the RWI vs surface type for São Paulo
+```{r}
+sp_city_rwi %>% 
+  dplyr::mutate(surface = as.factor(surface)) %>%
+  ggplot2::ggplot(aes(x = RWI, fill = surface)) +
+  ggplot2::geom_density(alpha = 0.6) +
+  labs(title = " ",
+       x = "RWI Value",
+       y = "Density") +
+  scale_fill_manual(values = c("water" = "blue", "non-water" = "red")) +
+  labs(fill = "Surface") +
+  theme_minimal()
+```
+
+### Running the RWI for all the cities
+
+```{r}
+df_SR_rwi <- do.call(rbind,
+                     lapply(df_SR_splited, \(x) {
+                       transform(x,
+                                 RWI = rwi(B3, B11, n_by_region(x)))
+                       }))
+
+df_SR_rwi %>% split(.$surface) %>% 
+  lapply(function(x) {
+    range(x$RWI)
+      }) %>% as.data.frame() %>% 
+  t() %>% as.data.frame() %>%
+  dplyr::rename(RWI_min = V1, RWI_max = V2)
+```
+
+
+
+
+# Plot the RWI vs surface type for all cities
+```{r}
+df_SR_rwi %>% 
+  mutate(surface = as.factor(surface),
+         city = as.factor(city)) %>%
+  ggplot2::ggplot(aes(x = RWI, fill = surface)) +
+  ggplot2::geom_density(alpha = 0.6) +
+  ggplot2::facet_wrap(~city, scales = c("fixed", "free")[2]) +
+  labs(title = "",
+       x = "RWI Value",
+       y = "Density") +
+  scale_fill_manual(values = c("water" = "blue", "non-water" = "red")) +
+  labs(fill = "Surface") +
+  theme_minimal()
+```
+
+
+## Comparison with other indices
+
+```{r}
+df_SR_all <- df_SR_rwi %>%
+  dplyr::mutate(NDWI = ndwi(B3, B8),
+                MNDWI = mndwi(B3, B11),
+                AWEIsh = AWEIsh(B2, B3, B8, B11, B12),
+                AWEInsh = AWEInsh(B2, B3, B8, B11, B12))
+
+# get the range of the indices
+df_SR_all %>% split(.$surface) %>% 
+  lapply(function(x) {
+    x[10:13] %>% 
+      apply(2, function(x) range(x))
+      }) %>% as.data.frame() %>%
+  t() %>% as.data.frame() %>%
+  dplyr::rename(Index_min = V1, Index_max = V2)
+```
+
+
+
+### Plot the density of the indices for all cities
+```{r}
+df_SR_all %>% dplyr::select(RWI, NDWI, MNDWI, AWEIsh, AWEInsh, surface) %>%
+  tidyr::pivot_longer(cols = -surface, names_to = "index", values_to = "value") %>%
+  dplyr::mutate(surface = as.factor(surface),
+         index = factor(index, levels = c('RWI', 'MNDWI', 'NDWI', 'AWEInsh', 'AWEIsh'))) %>%
+  ggplot2::ggplot(aes(x = value, fill = surface)) +
+  ggplot2::geom_density(alpha = 0.6) +
+  # facet_wrap(~index, ncol = 2, scales = "free") +
+  ggplot2::facet_wrap(~index, scales = c("fixed", "free")[2]) +
+  labs(title = "Surface reflectance index density of sample points",
+       x = "Value",
+       y = "Density") +
+  scale_fill_manual(values = c("water" = "blue", "non-water" = "red")) +
+  labs(fill = "Surface") +
+  theme_minimal()
+```
+
+
+
+
+### Base reference
+**This work is based on the following paper:**
+Eduardo Justiniano, Fernando kawakubo, Edimilson dos Santos Júnior, Breno de Melo, Gustavo Menezes, Marcel Fantin, Julio Pedrassoli, Marcos Martines, Rúbia Morato, August 20, 2024, "RWI", IEEE Dataport, doi: https://dx.doi.org/10.21227/1ybz-1y91.
+
+
+
+
+
+
+
+
+
