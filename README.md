@@ -187,7 +187,7 @@ df_SR_rwi %>% split(.$surface) %>%
     ## non.water -0.9422513 0.5658038
     ## water     -0.5333735 0.9970163
 
-# Plot the RWI vs surface type for all cities
+### Plot the RWI vs surface type for all cities
 
 ``` r
 df_SR_rwi %>% 
@@ -244,9 +244,8 @@ df_SR_all %>% dplyr::select(RWI, NDWI, MNDWI, AWEIsh, AWEInsh, surface) %>%
          index = factor(index, levels = c('RWI', 'MNDWI', 'NDWI', 'AWEInsh', 'AWEIsh'))) %>%
   ggplot2::ggplot(aes(x = value, fill = surface)) +
   ggplot2::geom_density(alpha = 0.6) +
-  # facet_wrap(~index, ncol = 2, scales = "free") +
   ggplot2::facet_wrap(~index, scales = c("fixed", "free")[2]) +
-  labs(title = "Surface reflectance index density of sample points",
+  labs(title = " ",
        x = "Value",
        y = "Density") +
   scale_fill_manual(values = c("water" = "blue", "non-water" = "red")) +
